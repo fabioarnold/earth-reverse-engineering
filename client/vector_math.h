@@ -9,10 +9,24 @@ void VectorAdd(vec3_t a, vec3_t b, vec3_t out) {
 	out[2] = a[2] + b[2];
 }
 
+void VectorAdd4(vec4_t a, vec4_t b, vec4_t out) {
+	out[0] = a[0] + b[0];
+	out[1] = a[1] + b[1];
+	out[2] = a[2] + b[2];
+	out[3] = a[3] + b[3];
+}
+
 void VectorSubtract(vec3_t a, vec3_t b, vec3_t out) {
 	out[0] = a[0] - b[0];
 	out[1] = a[1] - b[1];
 	out[2] = a[2] - b[2];
+}
+
+void VectorSubtract4(vec4_t a, vec4_t b, vec4_t out) {
+	out[0] = a[0] - b[0];
+	out[1] = a[1] - b[1];
+	out[2] = a[2] - b[2];
+	out[3] = a[3] - b[3];
 }
 
 void VectorCopy(vec3_t in, vec3_t out) {
@@ -53,6 +67,12 @@ void MatrixIdentity(mat4_t out) {
 	out[12] = 0.0f; out[13] = 0.0f; out[14] = 0.0f; out[15] = 1.0f;
 }
 
+void MatrixIdentity3(mat3_t out) {
+	out[0] = 1.0f; out[1] = 0.0f; out[2] = 0.0f;
+	out[3] = 0.0f; out[4] = 1.0f; out[5] = 0.0f;
+	out[6] = 0.0f; out[7] = 0.0f; out[8] = 1.0f;
+}
+
 void MatrixCopy(mat4_t in, mat4_t out) {
 	memcpy(out, in, sizeof(mat4_t));
 }
@@ -62,6 +82,12 @@ void MatrixCopy34(mat3_t in, mat4_t out) {
 	out[4] = in[3]; out[5] = in[4]; out[6] = in[5]; out[7] = 0.0f;
 	out[8] = in[6]; out[9] = in[7]; out[10] = in[8]; out[11] = 0.0f;
 	out[12] = 0.0f; out[13] = 0.0f; out[14] = 0.0f; out[15] = 1.0f;
+}
+
+void MatrixCopy43(mat4_t in, mat4_t out) {
+	out[0] = in[0]; out[1] = in[1]; out[2] = in[2];
+	out[3] = in[4]; out[4] = in[5]; out[5] = in[6];
+	out[6] = in[8]; out[7] = in[9]; out[8] = in[10];
 }
 
 void MatrixTranspose(mat4_t m) {

@@ -524,6 +524,36 @@ void initGL() {
 	texcoords_loc = glGetAttribLocation(program, "texcoords");
 }
 
+// https://fgiesen.wordpress.com/2012/08/31/frustum-planes-from-the-projection-matrix/
+void getFrustumPlanes(mat4_t frustum, vec4_t planes[6]) {
+	mat4_t m;
+	MatrixCopy(frustum, m); // we need to access the row vectors
+	MatrixTranspose(m);
+	for (int i = 0; i < 3; i++) {
+		VectorAdd4(&m[12], &m[4 * i], planes[i + 0]);
+		VectorSubtract4(&m[12], &m[4 * i], planes[i + 3]);
+	}
+}
+
+// -1 inside, 0 intersect, 1 outside
+int classifyObbFrustum(OrientedBoundingBox* obb, vec4_t planes[6]) {
+	int result = -1; // inside
+	for (int i = 0; i < 6; i++) {
+		// Real-Time Collision Detection 5.2.3 Testing Box Against Plane
+		vec3_t abs_plane {
+			fabsf(DotProduct(planes[i], &obb->orientation[0])),
+			fabsf(DotProduct(planes[i], &obb->orientation[3])),
+			fabsf(DotProduct(planes[i], &obb->orientation[6])),
+		};
+		float r = DotProduct(obb->extents, abs_plane);
+		float d = DotProduct(obb->center, planes[i]) + planes[i][3];
+		if (fabsf(d) < r) result = 0; // intersect
+		if (d + r < 0.0f) return 1; // outside
+	}
+
+	return result;
+}
+
 mat4_t cam_rot = {
 	0.0f, 0.0f, 1.0f, 0.0f,
 	1.0f, 0.0f, 0.0f, 0.0f,
@@ -532,14 +562,14 @@ mat4_t cam_rot = {
 };
 float cam_lat = 0.0f;
 float cam_lon = 0.0f;
-float cam_zoom = 0.0f;
+float cam_zoom = 2.0f;
 int mouse_x = 0, mouse_y = 0;
 int prev_mouse_x, prev_mouse_y;
 void drawCube();
 void drawPlanet() {
-	mat4_t temp0, temp1, temp2, 
-		translation, rotation, scale, 
-		model, view, modelview, projection, transform;
+	mat4_t temp0, temp1, temp2,
+		translation, rotation, scale,
+		model, view, projection, modelview, viewprojection, transform;
 
 	int width, height;
 	SDL_GL_GetDrawableSize(sdl_window, &width, &height);
@@ -547,9 +577,12 @@ void drawPlanet() {
 	glClearColor(1.0f, 1.0f, 1.0f, 1.0f);
 	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
+	float altitude = planet_radius * (1.0f + powf(1.337f, 0.0f - cam_zoom));
+
 	float aspect_ratio = (float)width / (float)height;
 	float fov = 0.25f * (float)M_PI;
-	float right_plane, top_plane, near_plane = 0.01f;
+	float right_plane, top_plane, near_plane = 1000000.0f, far_plane = altitude;
+	// TODO: choose near plane based on altitude
 	if (aspect_ratio > 1.0f) {
 		right_plane = tanf(0.5f * fov) * near_plane;
 		top_plane = right_plane / aspect_ratio;
@@ -557,10 +590,10 @@ void drawPlanet() {
 		top_plane = tanf(0.5f * fov) * near_plane;
 		right_plane = aspect_ratio * top_plane;
 	}
-	MatrixFrustum(-right_plane, right_plane, -top_plane, top_plane, near_plane, 10.0f, projection);
+	MatrixFrustum(-right_plane, right_plane, -top_plane, top_plane,
+		near_plane, far_plane, projection);
 
-	vec3_t t = { 0.0f, 0.0f, 0.0f };
-	t[2] = -(1.0f + near_plane + powf(1.337f, 5.0f - cam_zoom));
+	vec3_t t = { 0.0f, 0.0f, -altitude };
 
 	prev_mouse_x = mouse_x; prev_mouse_y = mouse_y;
 	unsigned mouse_buttons = SDL_GetMouseState(&mouse_x, &mouse_y);
@@ -579,12 +612,14 @@ void drawPlanet() {
 		VectorNormalize(w1);
 		vec3_t origin = { 0.0f, 0.0f, 0.0f };
 		float t0, t1;
-		if (intersectRaySphere(origin, w0, t, 1.0f, &t0) && 
-			intersectRaySphere(origin, w1, t, 1.0f, &t1)) {
+		if (intersectRaySphere(origin, w0, t, planet_radius, &t0) && 
+			intersectRaySphere(origin, w1, t, planet_radius, &t1)) {
 			VectorScale(w0, t0, w0);
 			VectorSubtract(w0, t, w0);
+			VectorNormalize(w0);
 			VectorScale(w1, t1, w1);
 			VectorSubtract(w1, t, w1);
+			VectorNormalize(w1);
 
 			vec3_t axis;
 			CrossProduct(w0, w1, axis);
@@ -598,9 +633,6 @@ void drawPlanet() {
 		}
 	}
 
-	ImGui::Text("%.2f %.2f %.2f", cam_rot[0], cam_rot[4], cam_rot[8]);
-	ImGui::Text("%.2f %.2f %.2f", cam_rot[1], cam_rot[5], cam_rot[9]);
-	ImGui::Text("%.2f %.2f %.2f", cam_rot[2], cam_rot[6], cam_rot[10]);
 	vec3_t pos = { 0.0f, 0.0f, 1.0f }, out;
 	mat4_t inv_cam_rot;
 	MatrixCopy(cam_rot, inv_cam_rot);
@@ -608,22 +640,19 @@ void drawPlanet() {
 	MatrixMultiplyPosition(inv_cam_rot, pos, out);
 	cam_lat = asinf(out[2]);
 	cam_lon = atan2f(out[1], out[0]);
-	ImGui::Text("%.2f %.2f", cam_lat * 180.0f / M_PI, cam_lon * 180.0f / M_PI);
+	ImGui::Text("lat/lon %.2f° %.2f°", cam_lat * 180.0f / M_PI, cam_lon * 180.0f / M_PI);
 
-	float s = 1.0f / planet_radius;
-	vec3_t s3 = { s, s, s };
-	MatrixScale(s3, scale);
-	MatrixTranslation(t, translation);
 	MatrixCopy(cam_rot, rotation);
-	MatrixMultiply(translation, rotation, temp1);
+	MatrixTranslation(t, translation);
+	MatrixMultiply(translation, rotation, view);
+	MatrixMultiply(projection, view, viewprojection);
+	vec4_t frustum_planes[6]; // for obb culling
+	getFrustumPlanes(viewprojection, frustum_planes);
 
-	glUseProgram(program);
-	glEnableVertexAttribArray(position_loc);
-	glEnableVertexAttribArray(texcoords_loc);
+	int num_meshes = 0, num_meshes_culled = 0;
 	int cam_level = (int)cam_zoom + 2;
 	float cam_lon_deg = 180.0f * cam_lon / M_PI;
 	float cam_lat_deg = 180.0f * cam_lat / M_PI;
-	PlanetMesh* planet_mesh_drawn = NULL;
 	for (int mesh_index = 0; mesh_index < planet_mesh_count; mesh_index++) {
 		PlanetMesh* planet_mesh = &planet_meshes[mesh_index];
 
@@ -633,9 +662,28 @@ void drawPlanet() {
 		//	cam_lat_deg < planet_mesh->lla_min[1] ||
 		//	cam_lat_deg > planet_mesh->lla_max[1]) continue;
 
-		MatrixMultiply(scale, planet_mesh->transform, temp0);
-		MatrixMultiply(temp1, temp0, modelview);
-		MatrixMultiply(projection, modelview, transform);
+		num_meshes++;
+		int c = classifyObbFrustum(&planet_mesh->obb, frustum_planes); 
+		if (c == 1) {
+			num_meshes_culled++;
+			continue; // cull
+		}
+		//if (c == 0) // intersection -> need to check child nodes
+
+#if 0 // before enabling this move far plane further back
+		t[2] -= 2.0f * planet_radius; // zoom out to visualize culling
+		MatrixTranslation(t, translation);
+		t[2] += 2.0f * planet_radius; // zoom back in
+		MatrixCopy(cam_rot, rotation);
+		MatrixMultiply(translation, rotation, view);
+		MatrixMultiply(projection, view, viewprojection);
+#endif
+
+		MatrixMultiply(viewprojection, planet_mesh->transform, transform);
+
+		glUseProgram(program);
+		glEnableVertexAttribArray(position_loc);
+		glEnableVertexAttribArray(texcoords_loc);
 		glUniformMatrix4fv(transform_loc, 1, GL_FALSE, transform);
 		glUniform2fv(uv_offset_loc, 1, planet_mesh->uv_offset);
 		glUniform2fv(uv_scale_loc, 1, planet_mesh->uv_scale);
@@ -649,19 +697,38 @@ void drawPlanet() {
 		glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, planet_mesh->indices_buffer);
 		glDrawElements(GL_TRIANGLES, planet_mesh->element_count, GL_UNSIGNED_SHORT, NULL);
 
-		planet_mesh_drawn = planet_mesh;
+		glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
+		glBindBuffer(GL_ARRAY_BUFFER, 0);
+		glDisableVertexAttribArray(position_loc);
+		glDisableVertexAttribArray(texcoords_loc);
+		glUseProgram(0);
+
+		// visualize obb
+		glDisable(GL_DEPTH_TEST);
+		glColor3f(0.0f, 0.0f, 0.0f);
+		MatrixTranslation(planet_mesh->obb.center, translation);
+		MatrixCopy34(planet_mesh->obb.orientation, rotation);
+		MatrixScale(planet_mesh->obb.extents, scale);
+
+		MatrixMultiply(rotation, scale, temp0);
+		MatrixMultiply(translation, temp0, model);
+		MatrixMultiply(view, model, modelview);
+
+		glPushMatrix();
+		glLoadMatrixf(modelview);
+		drawCube();
+		glPopMatrix();
+		glEnable(GL_DEPTH_TEST);
 	}
-	glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
-	glBindBuffer(GL_ARRAY_BUFFER, 0);
-	glDisableVertexAttribArray(position_loc);
-	glDisableVertexAttribArray(texcoords_loc);
-	glUseProgram(0);
+	ImGui::Text("culled %d/%d meshes", num_meshes_culled, num_meshes);
 
 	glMatrixMode(GL_PROJECTION);
 	glLoadMatrixf(projection);
 	glMatrixMode(GL_MODELVIEW);
-	glLoadMatrixf(temp1);
+	glLoadMatrixf(view);
+	glScalef(planet_radius, planet_radius, planet_radius);
 	glDisable(GL_DEPTH_TEST);
+	// draw axes
 	glBegin(GL_LINES);
 	glColor3f(1.0f, 0.0f, 0.0f);
 	glVertex3f(0.0f, 0.0f, 0.0f);
@@ -678,25 +745,6 @@ void drawPlanet() {
 	glColor3f(1.0f, 0.0f, 1.0f);
 	glVertex3f(out[0], out[1], out[2]);
 	glEnd();
-	glColor3f(0.0f, 0.0f, 0.0f);
-	if (planet_mesh_drawn) { // visualize obb
-		MatrixCopy(temp1, view);
-		
-		MatrixCopy(scale, temp0); // save
-		MatrixTranslation(planet_mesh_drawn->obb.center, translation);
-		MatrixCopy34(planet_mesh_drawn->obb.orientation, rotation);
-		MatrixScale(planet_mesh_drawn->obb.extents, scale);
-
-		MatrixMultiply(rotation, scale, temp2);
-		MatrixMultiply(translation, temp2, temp1);
-		MatrixMultiply(temp0, temp1, model);
-		MatrixMultiply(view, model, modelview);
-
-		glPushMatrix();
-		glLoadMatrixf(modelview);
-		drawCube();
-		glPopMatrix();
-	}
 	glEnable(GL_DEPTH_TEST);
 }
 
