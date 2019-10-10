@@ -44,45 +44,6 @@ typedef struct {
 	double n, s, w, e;
 } llbounds_t;
 
-void latLonToOctant(double lat, double lon, char octant[MAX_LEVEL]) {
-	octant[0] = 0;
-	octant[1] = 0;
-	llbounds_t box;
-
-	if (lat < 0.0) { octant[1] |= 2; box.n = 0.0; box.s = -90.0;}
-	else { octant[0] |= 2; box.n = 90.0; box.s = 0.0; }
-
-	if (lon < -90.0) { box.w = -180.0; box.e = -90.0; }
-	else if (lon < 0.0) { octant[1] |= 1; box.w = -90.0; box.e = 0.0; }
-	else if (lon < 90.0) { octant[0] |= 1; box.w = 0.0; box.e = 90.0; }
-	else { octant[0] |= 1; octant[1] |= 1; box.w = 90.0; box.e = 180.0; }
-
-	int level = MAX_LEVEL;
-	for (int i = 2; i < level; i++) {
-		octant[i] = 0;
-
-		double mid_lat = (box.n + box.s) / 2.0;
-		double mid_lon = (box.w + box.e) / 2.0;
-
-		if (lat < mid_lat) {
-			box.n = mid_lat;
-		} else {
-			box.s = mid_lat;
-			octant[i] |= 2;
-		}
-
-		if (lon < mid_lon) {
-			box.e = mid_lon;
-		} else {
-			box.w = mid_lon;
-			octant[i] |= 1;
-		}
-	}
-
-	// to ascii
-	for (int i = 0; i < level; i++) octant[i] += '0';
-}
-
 void getNodePathAndFlags(int path_id, char path[], int* level, int* flags) {
 	*level = 1 + (path_id & 3);
 	path_id >>= 2;
@@ -537,6 +498,10 @@ void loadPlanet() {
 				node->lla_max[i] = node_data->kml_bounding_box(i + 3);
 			}
 
+			printf("%s n %.2f s %.2f w %.2f e %.2f\n", node->path,
+				node->lla_max[1], node->lla_min[1],
+				node->lla_min[0], node->lla_max[0]);
+
 			for (int i = 0; i < 16; i++) node->mesh.transform[i] = (float)node_data->matrix_globe_from_mesh(i);
 
 			for (auto mesh : node_data->meshes()) node->mesh.loadFromMesh(&mesh);
@@ -941,7 +906,73 @@ void mainloop() {
 	SDL_GL_SwapWindow(sdl_window);
 }
 
+struct NodePathBounds {
+	llbounds_t bounds;
+	char path[MAX_LEVEL + 1];
+	int level; // == strlen(path)
+};
+
+void enumerateNodes(llbounds_t clip, int max_level) {
+	// TODO:
+	// * use clip to prune paths
+	// * return node paths
+	NodePathBounds* stack = NULL; // DFS
+
+	NodePathBounds npb;
+	npb = { { 0.0, -90.0, -180.0, -90.0 }, "02", 2 }; arrpush(stack, npb);
+	npb = { { 0.0, -90.0,  -90.0,   0.0 }, "03", 2 }; arrpush(stack, npb);
+	npb = { { 0.0, -90.0,    0.0,  90.0 }, "12", 2 }; arrpush(stack, npb);
+	npb = { { 0.0, -90.0,   90.0, 180.0 }, "13", 2 }; arrpush(stack, npb);
+	npb = { { 90.0,  0.0, -180.0, -90.0 }, "20", 2 }; arrpush(stack, npb);
+	npb = { { 90.0,  0.0,  -90.0,   0.0 }, "21", 2 }; arrpush(stack, npb);
+	npb = { { 90.0,  0.0,    0.0,  90.0 }, "30", 2 }; arrpush(stack, npb);
+	npb = { { 90.0,  0.0,   90.0, 180.0 }, "31", 2 }; arrpush(stack, npb);
+
+	while (arrlen(stack) > 0) {
+		npb = arrpop(stack);
+
+		printf("%s n %.2f s %.2f w %.2f e %.2f\n", npb.path, npb.bounds.n, npb.bounds.s, npb.bounds.w, npb.bounds.e);
+
+		if (npb.level >= max_level) continue; // Do not descend
+
+		double mid_lat = (npb.bounds.n + npb.bounds.s) / 2.0;
+		double mid_lon = (npb.bounds.w + npb.bounds.e) / 2.0;
+
+		NodePathBounds child;
+		child.level = npb.level + 1;
+		int magic = child.level % 2 == 1 ? 4 : 0; // I don't know why...
+		
+		if (npb.bounds.n == 90.0) { // no vertical split
+			child.bounds = { npb.bounds.n, mid_lat, npb.bounds.w, npb.bounds.e };
+			sprintf(child.path, "%s%d", npb.path, 2 + magic);
+			arrpush(stack, child);
+		} else {
+			child.bounds = { npb.bounds.n, mid_lat, npb.bounds.w, mid_lon };
+			sprintf(child.path, "%s%d", npb.path, 2 + magic);
+			arrpush(stack, child);
+			child.bounds = { npb.bounds.n, mid_lat, mid_lon, npb.bounds.e };
+			sprintf(child.path, "%s%d", npb.path, 3 + magic);
+			arrpush(stack, child);
+		}
+
+		if (npb.bounds.s == -90.0) { // no vertical split
+			child.bounds = { mid_lat, npb.bounds.s, npb.bounds.w, npb.bounds.e };
+			sprintf(child.path, "%s%d", npb.path, 0 + magic);
+			arrpush(stack, child);
+		} else {
+			child.bounds = { mid_lat, npb.bounds.s, npb.bounds.w, mid_lon };
+			sprintf(child.path, "%s%d", npb.path, 0 + magic);
+			arrpush(stack, child);
+			child.bounds = { mid_lat, npb.bounds.s, mid_lon, npb.bounds.e };
+			sprintf(child.path, "%s%d", npb.path, 1 + magic);
+			arrpush(stack, child);
+		}
+	}
+}
+
 int main(int argc, char* argv[]) {
+	enumerateNodes({}, 4); // test
+
 	// create cache directory
 	createDir("cache");
 
