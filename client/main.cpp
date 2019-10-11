@@ -40,10 +40,6 @@ SDL_Window* sdl_window;
 
 const int MAX_LEVEL = 20;
 
-typedef struct {
-	double n, s, w, e;
-} llbounds_t;
-
 void getNodePathAndFlags(int path_id, char path[], int* level, int* flags) {
 	*level = 1 + (path_id & 3);
 	path_id >>= 2;
@@ -906,15 +902,22 @@ void mainloop() {
 	SDL_GL_SwapWindow(sdl_window);
 }
 
+typedef struct {
+	double n, s, w, e;
+} llbounds_t;
+
+bool overlap(llbounds_t& b0, llbounds_t& b1) {
+	return b0.n >= b1.s && b1.n >= b0.s && b0.w <= b1.e && b1.w <= b0.e;
+};
+
 struct NodePathBounds {
 	llbounds_t bounds;
 	char path[MAX_LEVEL + 1];
 	int level; // == strlen(path)
 };
 
-void enumerateNodes(llbounds_t clip, int max_level) {
+void enumerateNodes(llbounds_t& clip, int max_level) {
 	// TODO:
-	// * use clip to prune paths
 	// * return node paths
 	NodePathBounds* stack = NULL; // DFS
 
@@ -931,6 +934,7 @@ void enumerateNodes(llbounds_t clip, int max_level) {
 	while (arrlen(stack) > 0) {
 		npb = arrpop(stack);
 
+		if (!overlap(clip, npb.bounds)) continue;
 		printf("%s n %.2f s %.2f w %.2f e %.2f\n", npb.path, npb.bounds.n, npb.bounds.s, npb.bounds.w, npb.bounds.e);
 
 		if (npb.level >= max_level) continue; // Do not descend
@@ -971,7 +975,9 @@ void enumerateNodes(llbounds_t clip, int max_level) {
 }
 
 int main(int argc, char* argv[]) {
-	enumerateNodes({}, 4); // test
+	llbounds_t clip = { 10.0, -10.0, -10.0, 10.0 };
+	//llbounds_t clip = { 10.0, -10.0, 170.0, -170.0 }; // TODO
+	enumerateNodes(clip, 1); // test
 
 	// create cache directory
 	createDir("cache");
