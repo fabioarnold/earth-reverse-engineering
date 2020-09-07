@@ -608,9 +608,45 @@ mat4_t cam_rot = {
 };
 float cam_lat = 0.0f;
 float cam_lon = 0.0f;
+float cam_height = 0.0f;
+vec3_t cam_pos;
 float cam_zoom = 3.0f;
 int mouse_x = 0, mouse_y = 0;
 int prev_mouse_x, prev_mouse_y;
+
+void cameraGui() {
+	mat4_t inv_cam_rot;
+	MatrixCopy(cam_rot, inv_cam_rot);
+	MatrixTranspose(inv_cam_rot);
+
+	vec3_t out;
+	vec3_t pos = { 0.0f, 0.0f, 1.0f };
+	MatrixMultiplyPosition(inv_cam_rot, pos, out);
+	cam_lat = asinf(out[2]);
+	cam_lon = atan2f(out[1], out[0]);
+	pos[0] = pos[1] = 0;
+	pos[2] = cam_height;
+	MatrixMultiplyPosition(inv_cam_rot, pos, out);
+	VectorCopy(out, cam_pos);
+
+	ImGui::Begin("Camera");
+
+	float in_cam_height = (cam_height - planet_radius) / 1000;
+	ImGui::SliderAngle("lat", &cam_lat, -90, 90, "%.6f°");
+	ImGui::SliderAngle("lon", &cam_lon, -180, 180, "%.6f°");
+	ImGui::InputFloat("height (km)", &in_cam_height);
+	cam_height = 1000 * in_cam_height + planet_radius;
+
+	vec3_t in_cam_pos;
+	VectorScale(cam_pos, 1.0f / 1000.0f, in_cam_pos);
+	ImGui::InputFloat("x (km)", &in_cam_pos[0]);
+	ImGui::InputFloat("y (km)", &in_cam_pos[1]);
+	ImGui::InputFloat("z (km)", &in_cam_pos[2]);
+	VectorScale(in_cam_pos, 1000.0f, cam_pos);
+
+	ImGui::End();
+}
+
 void drawCube();
 void drawPlanet() {
 	mat4_t temp0, temp1, temp2,
@@ -623,11 +659,11 @@ void drawPlanet() {
 	glClearColor(1.0f, 1.0f, 1.0f, 1.0f);
 	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-	float altitude = planet_radius * (1.0f + powf(1.337f, 0.0f - cam_zoom));
+	cam_height = planet_radius * (1.0f + powf(1.337f, 0.0f - cam_zoom));
 
 	float aspect_ratio = (float)width / (float)height;
-	float fov = 0.25f * (float)M_PI;
-	float right_plane, top_plane, near_plane = 1000000.0f, far_plane = altitude;
+	float fov = 0.25f * (float)M_PI; // 45°
+	float right_plane, top_plane, near_plane = 1000.0f, far_plane = cam_height;
 	// TODO: choose near plane based on altitude
 	if (aspect_ratio > 1.0f) {
 		right_plane = tanf(0.5f * fov) * near_plane;
@@ -639,7 +675,7 @@ void drawPlanet() {
 	MatrixFrustum(-right_plane, right_plane, -top_plane, top_plane,
 		near_plane, far_plane, projection);
 
-	vec3_t t = { 0.0f, 0.0f, -altitude };
+	vec3_t t = { 0.0f, 0.0f, -cam_height };
 
 	prev_mouse_x = mouse_x; prev_mouse_y = mouse_y;
 	unsigned mouse_buttons = SDL_GetMouseState(&mouse_x, &mouse_y);
@@ -709,11 +745,7 @@ void drawPlanet() {
 		}
 	}
 
-	vec3_t pos = { 0.0f, 0.0f, 1.0f };
-	MatrixMultiplyPosition(inv_cam_rot, pos, out);
-	cam_lat = asinf(out[2]);
-	cam_lon = atan2f(out[1], out[0]);
-	ImGui::Text("cam lat/lon %.2f° %.2f°", cam_lat * 180.0f / M_PI, cam_lon * 180.0f / M_PI);
+	cameraGui();
 
 	MatrixCopy(cam_rot, rotation);
 	MatrixTranslation(t, translation);
@@ -724,8 +756,6 @@ void drawPlanet() {
 
 	int num_meshes = 0, num_meshes_culled = 0;
 	int cam_level = (int)cam_zoom + 2;
-	float cam_lon_deg = 180.0f * cam_lon / M_PI;
-	float cam_lat_deg = 180.0f * cam_lat / M_PI;
 
 	PlanetNode** draw_nodes = NULL;
 	arrsetlen(draw_nodes, 0); // reset
@@ -982,8 +1012,8 @@ int main(int argc, char* argv[]) {
 	// create cache directory
 	createDir("cache");
 
-	int video_width = 768;
-	int video_height = 768;
+	int video_width = 1024;
+	int video_height = 1024;
 
 	if (SDL_Init(SDL_INIT_VIDEO) != 0) {
 		fprintf(stderr, "Couldn't init SDL2: %s\n", SDL_GetError());
