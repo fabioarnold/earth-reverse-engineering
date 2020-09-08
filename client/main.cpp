@@ -1,6 +1,7 @@
 #include <math.h>
 #include <fstream>
 #include <sys/stat.h>
+#include <sstream>
 #ifdef _WIN32
 	#include <direct.h>
 #endif
@@ -33,6 +34,7 @@ using namespace geo_globetrotter_proto_rocktree;
 #include "examples/imgui_impl_sdl.cpp"
 #include "examples/imgui_impl_opengl2.cpp"
 
+#include "proto_url.h"
 #include "vector_math.h"
 #include "util.cpp"
 
@@ -1004,16 +1006,37 @@ void enumerateNodes(llbounds_t& clip, int max_level) {
 	}
 }
 
+void testProtoUrlEncode() {
+	// https://github.com/marin-m/pbtk/wiki/Protobuf-URL
+	NodeDataRequest req;
+	NodeKey* node_key = new NodeKey();
+	node_key->set_path("0123456789abcdef");
+	node_key->set_epoch(5);
+	req.set_allocated_node_key(node_key);
+	req.set_texture_format(Texture_Format_CRN_DXT1);
+	req.set_imagery_epoch(5);
+	//std::cout << "req: \"" << req.SerializeAsString() << "\"" << std::endl;
+
+	auto url = "NodeData/pb=" + protoUrlEncode(req);
+	std::cout << url << std::endl;
+
+	char expect_url[200];
+	sprintf(expect_url, "NodeData/pb=!1m2!1s%s!2u%d!2e%d!3u%d", req.node_key().path().c_str(), req.node_key().epoch(), req.texture_format(), req.imagery_epoch());
+	printf("%s\n", expect_url);
+	assert(!strcmp(url.c_str(), expect_url));
+}
+
 int main(int argc, char* argv[]) {
 	llbounds_t clip = { 10.0, -10.0, -10.0, 10.0 };
 	//llbounds_t clip = { 10.0, -10.0, 170.0, -170.0 }; // TODO
 	enumerateNodes(clip, 1); // test
+	testProtoUrlEncode();
 
 	// create cache directory
 	createDir("cache");
 
-	int video_width = 1024;
-	int video_height = 1024;
+	int video_width = 768;
+	int video_height = 768;
 
 	if (SDL_Init(SDL_INIT_VIDEO) != 0) {
 		fprintf(stderr, "Couldn't init SDL2: %s\n", SDL_GetError());
